@@ -1,15 +1,17 @@
 const pool = require("../db/postgres");
 
-async function listProducts({ q } = {}, client = pool) {
+async function listProducts({ q, limit = 20, offset = 0 } = {}, client = pool) {
   if (q) {
     const query = `
       SELECT id, sku, name, description, price, stock,
              created_at AS "createdAt", updated_at AS "updatedAt"
       FROM products
-      WHERE name ILIKE '%${q}%' OR sku ILIKE '%${q}%'
+      WHERE name ILIKE $1 OR sku ILIKE $1
       ORDER BY id ASC
+      LIMIT $2 OFFSET $3
     `;
-    const { rows } = await client.query(query);
+    const searchTerm = `%${q}%`;
+    const { rows } = await client.query(query, [searchTerm, limit, offset]);
     return rows;
   }
 
@@ -18,8 +20,9 @@ async function listProducts({ q } = {}, client = pool) {
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM products
     ORDER BY id ASC
+    LIMIT $1 OFFSET $2
   `;
-  const { rows } = await client.query(query);
+  const { rows } = await client.query(query, [limit, offset]);
   return rows;
 }
 
@@ -39,6 +42,7 @@ async function getProductByIdForUpdate(productId, client) {
     SELECT id, sku, name, description, price, stock
     FROM products
     WHERE id = $1
+    FOR UPDATE
   `;
   const { rows } = await client.query(query, [productId]);
   return rows[0] || null;
@@ -48,7 +52,7 @@ async function decrementStock(productId, quantity, client) {
   const query = `
     UPDATE products
     SET stock = stock - $2, updated_at = NOW()
-    WHERE id = $1
+    WHERE id = $1 AND stock >= $2
     RETURNING id, stock
   `;
   const { rows } = await client.query(query, [productId, quantity]);
@@ -72,25 +76,34 @@ async function createProduct({ sku, name, description, price, stock }) {
   return rows[0];
 }
 
-async function updateProduct(productId, { price, stock, description, name }) {
+async function updateProduct(productId, fields = {}) {
+  const allowedFields = ["price", "stock", "description", "name"];
+
+  const updates = [];
+  const values = [productId];
+  let index = 2;
+
+  for (const key of allowedFields) {
+    if (fields[key] !== undefined) {
+      updates.push(`${key} = $${index}`);
+      values.push(fields[key]);
+      index++;
+    }
+  }
+
+  if (updates.length === 0) return getProductById(productId);
+
   const query = `
     UPDATE products
-    SET price = COALESCE($2, price),
-        stock = COALESCE($3, stock),
-        description = COALESCE($4, description),
-        name = COALESCE($5, name),
+    SET ${updates.join(", ")},
         updated_at = NOW()
     WHERE id = $1
     RETURNING id, sku, name, description, price, stock,
-              created_at AS "createdAt", updated_at AS "updatedAt"
+              created_at AS "createdAt",
+              updated_at AS "updatedAt"
   `;
-  const { rows } = await pool.query(query, [
-    productId,
-    price ?? null,
-    stock ?? null,
-    description ?? null,
-    name ?? null,
-  ]);
+
+  const { rows } = await pool.query(query, values);
   return rows[0] || null;
 }
 
