@@ -10,11 +10,22 @@ export default function OrderDetailPage() {
 
   useEffect(() => {
     if (!id) return;
-    getOrder(id).then(setOrder);
 
-    setInterval(() => {
-      getOrder(id).then(setOrder);
-    }, 2000);
+    let mounted = true;
+
+    const fetchOrder = async() => {
+      const data = await getOrder(id);
+      if(mounted) setOrder(data);
+    };
+
+    fetchOrder();
+
+    const interval = setInterval(fetchOrder, 2000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval)
+    }
   }, [id]);
 
   if (!order) return <p>Loading order...</p>;
@@ -36,8 +47,8 @@ export default function OrderDetailPage() {
 
       <h2>Items</h2>
       <ul>
-        {(order.items || []).map((item, idx) => (
-          <li key={idx}>
+        {(order.items || []).map((item) => (
+          <li key={item.id}>
             {item.name} x {item.quantity} @ ${item.unitPrice}
           </li>
         ))}
@@ -46,8 +57,8 @@ export default function OrderDetailPage() {
       <h2>Payments</h2>
       {(order.payments || []).length === 0 && <p>No payments yet.</p>}
       <ul>
-        {(order.payments || []).map((p, idx) => (
-          <li key={idx}>
+        {(order.payments || []).map((p) => (
+          <li key={p.id}>
             {p.status} - ${p.amount} ({p.providerTxnId})
           </li>
         ))}

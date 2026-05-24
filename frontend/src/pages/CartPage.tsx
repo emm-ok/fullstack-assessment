@@ -33,8 +33,8 @@ export default function CartPage() {
     <div className="page">
       <h1>Cart</h1>
       <ul className="cart-list">
-        {items.map((item, idx) => (
-          <li key={idx} className="cart-item">
+        {items.map((item) => (
+          <li key={item.productId} className="cart-item">
             <span>{item.name}</span>
             <span>
               {item.quantity} x ${item.price.toFixed(2)}

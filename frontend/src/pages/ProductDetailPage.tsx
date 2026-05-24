@@ -20,6 +20,11 @@ export default function ProductDetailPage() {
 
   if (!product) return <p>Loading...</p>;
 
+  const handleQuantity = (e: any) => {
+    const value = Math.max(1, Number(e.target.value) || 1);
+    setQuantity(value)
+  }
+
   async function buyNow() {
     if (!product) return;
     const order = await createOrder({

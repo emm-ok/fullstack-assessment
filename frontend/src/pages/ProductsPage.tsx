@@ -8,10 +8,10 @@ export default function ProductsPage() {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function load() {
+  async function load(search = "") {
     setLoading(true);
     try {
-      const data = await listProducts(q);
+      const data = await listProducts(search);
       setProducts(data);
     } catch (err) {
       console.error(err);
@@ -20,8 +20,12 @@ export default function ProductsPage() {
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    const timeout = setTimeout(() => {
+      load(q);
+    }, 300);
+
+    return () => clearTimeout(timeout)
+  }, [q]);
 
   return (
     <div className="page">
@@ -39,8 +43,8 @@ export default function ProductsPage() {
       </div>
       {loading && <p>Loading...</p>}
       <ul className="product-grid">
-        {products.map((p, idx) => (
-          <li key={idx} className="product-card">
+        {products.map((p) => (
+          <li key={p.id} className="product-card">
             <Link to={`/products/${p.id}`}>
               <h3>{p.name}</h3>
               <p className="sku">{p.sku}</p>
