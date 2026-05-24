@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { createOrder, getProduct } from "../api";
 import { useCart } from "../state/CartContext";
 import type { Product } from "../types";
+import DOMPurify from "dompurify";
 
 export default function ProductDetailPage() {
   const { id } = useParams();
@@ -23,7 +24,7 @@ export default function ProductDetailPage() {
   const handleQuantity = (e: any) => {
     const value = Math.max(1, Number(e.target.value) || 1);
     setQuantity(value);
-  }
+  };
 
   async function buyNow() {
     if (!product) return;
@@ -41,7 +42,9 @@ export default function ProductDetailPage() {
       <p className="sku">{product.sku}</p>
       <div
         className="description"
-        dangerouslySetInnerHTML={{ __html: product.description }}
+        dangerouslySetInnerHTML={{
+          __html: DOMPurify.sanitize(product.description),
+        }}
       />
       <p className="price">${product.price}</p>
       <p className="stock">
