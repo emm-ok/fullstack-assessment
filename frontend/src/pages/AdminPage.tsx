@@ -26,7 +26,7 @@ export default function AdminPage() {
     setProducts((current) =>
       current.map((it) =>
         it.id === p.id
-          ? { ...it, ...draft, price: String(draft.price ?? it.price) }
+          ? { ...it, ...draft, price: draft.price ?? it.price }
           : it,
       ),
     );

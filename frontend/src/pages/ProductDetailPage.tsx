@@ -30,7 +30,7 @@ export default function ProductDetailPage() {
     const order = await createOrder({
       customerId: "customer_001",
       items: [{ productId: product.id, quantity }],
-      totalAmount: parseFloat(product.price) * quantity,
+      totalAmount: product.price * quantity,
     });
     navigate(`/orders/${order.id}`);
   }

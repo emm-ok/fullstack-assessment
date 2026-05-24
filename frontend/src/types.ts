@@ -20,7 +20,7 @@ export interface OrderItem {
   id: number;
   productId: number;
   quantity: number;
-  unitPrice: string;
+  unitPrice: number;
   name: string;
   sku: string;
 }
@@ -28,7 +28,7 @@ export interface OrderItem {
 export interface Payment {
   id: number;
   orderId: number;
-  amount: string;
+  amount: number;
   providerTxnId: string;
   status: "SUCCESS" | "FAILED";
   createdAt: string;
@@ -37,7 +37,7 @@ export interface Payment {
 export interface Order {
   id: number;
   customerId: string;
-  totalAmount: string;
+  totalAmount: number;
   status: "PENDING" | "PAID" | "FAILED" | "CANCELLED";
   createdAt: string;
   updatedAt: string;

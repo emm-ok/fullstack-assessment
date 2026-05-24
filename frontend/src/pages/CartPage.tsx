@@ -6,6 +6,7 @@ export default function CartPage() {
   const { items, total, remove, clear } = useCart();
   const navigate = useNavigate();
 
+  console.log(items)
   async function checkout() {
     if (items.length === 0) return;
     const order = await createOrder({
