@@ -13,9 +13,9 @@ export default function OrderDetailPage() {
 
     let mounted = true;
 
-    const fetchOrder = async() => {
+    const fetchOrder = async () => {
       const data = await getOrder(id);
-      if(mounted) setOrder(data);
+      if (mounted) setOrder(data);
     };
 
     fetchOrder();
@@ -24,17 +24,22 @@ export default function OrderDetailPage() {
 
     return () => {
       mounted = false;
-      clearInterval(interval)
-    }
+      clearInterval(interval);
+    };
   }, [id]);
 
   if (!order) return <p>Loading order...</p>;
 
   async function pay() {
-    setPaying(true);
-    const result = await chargeOrder(order!.id);
-    setOrder(result.order);
-    setPaying(false);
+    try {
+      setPaying(true);
+      const result = await chargeOrder(order!.id);
+      setOrder(result.order);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setPaying(false);
+    }
   }
 
   return (
