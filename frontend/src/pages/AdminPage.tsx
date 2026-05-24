@@ -2,45 +2,111 @@ import { useEffect, useState } from "react";
 import { listOrdersAdmin, listProducts, updateProductAdmin } from "../api";
 import type { Order, Product } from "../types";
 
+type EditingState = Record<number, Partial<Product>>;
+type SavingState = Record<number, boolean>;
+
 export default function AdminPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [editing, setEditing] = useState<Record<number, Partial<Product>>>({});
-  const [loading, setLoading] = useState<boolean>(false);
+  const [editing, setEditing] = useState<EditingState>({});
+  const [saving, setSaving] = useState<SavingState>({});
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    listOrdersAdmin().then(setOrders);
-    listProducts().then(setProducts);
+    async function load() {
+      try {
+        const [ordersData, productsData] = await Promise.all([
+          listOrdersAdmin(),
+          listProducts(),
+        ]);
+
+        setOrders(ordersData);
+        setProducts(productsData);
+      } catch (err) {
+        console.error(err);
+        setError("Failed to load admin data");
+      }
+    }
+
+    load();
   }, []);
 
-  function onChangeField(id: number, field: keyof Product, value: string) {
+  function onChangeField<K extends keyof Product>(
+    id: number,
+    field: K,
+    value: Product[K],
+  ) {
     setEditing((prev) => ({
       ...prev,
-      [id]: { ...prev[id], [field]: value },
+      [id]: {
+        ...prev[id],
+        [field]: value,
+      },
     }));
   }
 
-  async function save(p: Product) {
-    setLoading(true);
-    const draft = editing[p.id] || {};
-    setProducts((current) =>
-      current.map((it) =>
-        it.id === p.id
-          ? { ...it, ...draft, price: draft.price ?? it.price }
-          : it,
-      ),
+  async function save(product: Product) {
+    const draft = editing[product.id];
+
+    if (!draft) return;
+
+    if (
+      draft.price !== undefined &&
+      (Number.isNaN(draft.price) || draft.price < 0)
+    ) {
+      setError("Price must be a valid positive number");
+      return;
+    }
+
+    if (
+      draft.stock !== undefined &&
+      (!Number.isInteger(draft.stock) || draft.stock < 0)
+    ) {
+      setError("Stock must be a valid positive integer");
+      return;
+    }
+
+    const previousProducts = products;
+
+    const updatedProducts = products.map((p) =>
+      p.id === product.id ? { ...p, ...draft } : p,
     );
+
+    setProducts(updatedProducts);
+
+    setSaving((prev) => ({
+      ...prev,
+      [product.id]: true,
+    }));
+
+    setError(null);
+
     try {
-      await updateProductAdmin(p.id, {
-        price: draft.price !== undefined ? Number(draft.price) : undefined,
-        stock: draft.stock !== undefined ? Number(draft.stock) : undefined,
-        description: draft.description as string | undefined,
-        name: draft.name as string | undefined,
+      const updated = await updateProductAdmin(product.id, {
+        name: draft.name,
+        description: draft.description,
+        price: draft.price,
+        stock: draft.stock,
       });
-    } catch (error) {
-      console.error(error);
+
+      setProducts((current) =>
+        current.map((p) => (p.id === updated.id ? updated : p)),
+      );
+
+      setEditing((prev) => {
+        const next = { ...prev };
+        delete next[product.id];
+        return next;
+      });
+    } catch (err) {
+      console.error(err);
+      setProducts(previousProducts);
+      setError("Failed to update product");
     } finally {
-      setLoading(false);
+      setSaving((prev) => ({
+        ...prev,
+        [product.id]: false,
+      }));
     }
   }
 
@@ -48,8 +114,11 @@ export default function AdminPage() {
     <div className="page">
       <h1>Admin</h1>
 
+      {error && <p className="error">{error}</p>}
+
       <section>
         <h2>Orders</h2>
+
         <table>
           <thead>
             <tr>
@@ -60,14 +129,15 @@ export default function AdminPage() {
               <th>Created</th>
             </tr>
           </thead>
+
           <tbody>
-            {orders.map((o, idx) => (
-              <tr key={idx}>
-                <td>{o.id}</td>
-                <td>{o.customerId}</td>
-                <td>${o.totalAmount}</td>
-                <td>{o.status}</td>
-                <td>{new Date(o.createdAt).toLocaleString()}</td>
+            {orders.map((order) => (
+              <tr key={order.id}>
+                <td>{order.id}</td>
+                <td>{order.customerId}</td>
+                <td>${order.totalAmount.toFixed(2)}</td>
+                <td>{order.status}</td>
+                <td>{new Date(order.createdAt).toLocaleString()}</td>
               </tr>
             ))}
           </tbody>
@@ -76,31 +146,65 @@ export default function AdminPage() {
 
       <section>
         <h2>Products</h2>
+
         <ul className="admin-products">
-          {products.map((p, idx) => (
-            <li key={idx} className="admin-product">
+          {products.map((product) => (
+            <li key={product.id} className="admin-product">
               <input
                 type="text"
-                defaultValue={p.name}
-                onChange={(e) => onChangeField(p.id, "name", e.target.value)}
-              />
-              <input
-                type="text"
-                defaultValue={p.price}
-                onChange={(e) => onChangeField(p.id, "price", e.target.value)}
-              />
-              <input
-                type="text"
-                defaultValue={String(p.stock)}
-                onChange={(e) => onChangeField(p.id, "stock", e.target.value)}
-              />
-              <textarea
-                defaultValue={p.description}
+                value={editing[product.id]?.name ?? product.name}
                 onChange={(e) =>
-                  onChangeField(p.id, "description", e.target.value)
+                  onChangeField(product.id, "name", e.target.value)
                 }
               />
-              <button onClick={() => save(p)}>{loading ? "Saving..." : "Save"}</button>
+
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={editing[product.id]?.price ?? product.price}
+                onChange={(e) =>
+                  onChangeField(
+                    product.id,
+                    "price",
+                    Number(e.target.value),
+                  )
+                }
+              />
+
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={editing[product.id]?.stock ?? product.stock}
+                onChange={(e) =>
+                  onChangeField(
+                    product.id,
+                    "stock",
+                    Number(e.target.value),
+                  )
+                }
+              />
+
+              <textarea
+                value={
+                  editing[product.id]?.description ?? product.description
+                }
+                onChange={(e) =>
+                  onChangeField(
+                    product.id,
+                    "description",
+                    e.target.value,
+                  )
+                }
+              />
+
+              <button
+                onClick={() => save(product)}
+                disabled={saving[product.id]}
+              >
+                {saving[product.id] ? "Saving..." : "Save"}
+              </button>
             </li>
           ))}
         </ul>
