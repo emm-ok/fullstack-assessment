@@ -24,11 +24,15 @@ async function withTransaction(callback) {
   }
 }
 
+function createError(message, status = 500) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
 async function createOrder({ customerId, items }) {
   if (!customerId || !Array.isArray(items) || items.length === 0) {
-    const error = new Error("customerId and items are required");
-    error.status = 400;
-    throw error;
+    throw createError("customerId and items are required", 400);
   }
 
   return withTransaction(async (client) => {
@@ -37,40 +41,33 @@ async function createOrder({ customerId, items }) {
 
     for (const item of items) {
       if (!item.productId || !item.quantity || item.quantity <= 0) {
-        const error = new Error("Invalid order item");
-        error.status = 400;
-        throw error;
+        throw createError("Invalid order item", 400);
       }
 
-      const product =
-        await productsRepository.getProductByIdForUpdate(
-          item.productId,
-          client
-        );
+      const product = await productsRepository.getProductByIdForUpdate(
+        item.productId,
+        client,
+      );
 
       if (!product) {
-        const error = new Error(
-          `Product ${item.productId} not found`
-        );
-        error.status = 404;
-        throw error;
+        throw createError(`Product ${item.productId} not found`, 404);
       }
 
       if (product.stock < item.quantity) {
-        const error = new Error(
-          `Insufficient stock for ${product.name}`
-        );
-        error.status = 409;
-        throw error;
+        throw createError(`Insufficient stock for ${product.name}`, 409);
       }
 
       await productsRepository.decrementStock(
         item.productId,
         item.quantity,
-        client
+        client,
       );
 
       const unitPrice = Number(product.price);
+
+      if (Number.isNaN(unitPrice)) {
+        throw createError(`Invalid product price for ${product.name}`, 500);
+      }
 
       enrichedItems.push({
         productId: product.id,
@@ -87,7 +84,7 @@ async function createOrder({ customerId, items }) {
         totalAmount: calculatedTotal,
         items: enrichedItems,
       },
-      client
+      client,
     );
 
     return order;
@@ -95,94 +92,172 @@ async function createOrder({ customerId, items }) {
 }
 
 async function chargeOrder({ orderId, idempotencyKey }) {
-  if (!idempotencyKey) {
-    const error = new Error("Idempotency key is required");
-    error.status = 400;
-    throw error;
+  if (!orderId) {
+    throw createError("Order ID is required", 400);
   }
 
-  const cached = await redis.get(`idem:${idempotencyKey}`);
+  if (!idempotencyKey) {
+    throw createError("Idempotency key is required", 400);
+  }
+
+  const cacheKey = `idem:${idempotencyKey}`;
+  const lockKey = `lock:charge:${idempotencyKey}`;
+
+  const cached = await redis.get(cacheKey);
 
   if (cached) {
     return JSON.parse(cached);
   }
 
-  return withTransaction(async (client) => {
-    const existingPayment =
-      await paymentsRepository.findPaymentByIdempotencyKey(
-        idempotencyKey,
-        client
+  const locked = await redis.set(lockKey, "1", "NX", "EX", 15);
+
+  if (!locked) {
+    throw createError("Duplicate payment request in progress", 409);
+  }
+
+  try {
+    // Validate and lock order
+
+    const order = await withTransaction(async (client) => {
+      const existingPayment =
+        await paymentsRepository.findPaymentByIdempotencyKey(
+          idempotencyKey,
+          client,
+        );
+
+      if (existingPayment) {
+        const existingOrder = await ordersRepository.getOrderById(
+          existingPayment.orderId,
+          client,
+        );
+
+        return {
+          existing: true,
+          response: {
+            order: existingOrder,
+            payment: existingPayment,
+          },
+        };
+      }
+
+      const lockedOrder = await ordersRepository.getOrderByIdForUpdate(
+        orderId,
+        client,
       );
 
-    if (existingPayment) {
-      const order = await ordersRepository.getOrderById(
-        existingPayment.order_id,
-        client
-      );
+      if (!lockedOrder) {
+        throw createError("Order not found", 404);
+      }
+
+      if (lockedOrder.status === "PAID") {
+        throw createError("Order has already been paid", 409);
+      }
+
+      if (lockedOrder.status !== "PENDING") {
+        throw createError("Only pending orders can be charged", 409);
+      }
 
       return {
-        order,
-        payment: existingPayment,
+        existing: false,
+        order: lockedOrder,
       };
-    }
-
-    const order = await ordersRepository.getOrderById(
-      orderId,
-      client
-    );
-
-    if (!order) {
-      const error = new Error("Order not found");
-      error.status = 404;
-      throw error;
-    }
-
-    if (order.status !== "PENDING") {
-      const error = new Error(
-        "Only pending orders can be charged"
-      );
-      error.status = 409;
-      throw error;
-    }
-
-    const gatewayResponse = await paymentGateway.charge({
-      orderId: order.id,
-      amount: order.total_amount,
     });
 
-    const payment =
-      await paymentsRepository.createPayment(
+    // Return existing successful payment
+
+    if (order.existing) {
+      return order.response;
+    }
+
+    // Call payment gateway OUTSIDE transaction
+
+    let gatewayResponse;
+
+    try {
+      gatewayResponse = await paymentGateway.charge({
+        orderId: order.order.id,
+        amount: order.order.total_amount,
+      });
+    } catch (err) {
+      throw createError(
+        err.message || "Payment gateway failed",
+        err.status || 502,
+      );
+    }
+
+    if (!gatewayResponse || !gatewayResponse.providerTxnId) {
+      throw createError("Invalid payment gateway response", 502);
+    }
+
+    //  Finalize payment in transaction
+
+    const response = await withTransaction(async (client) => {
+      const latestOrder = await ordersRepository.getOrderByIdForUpdate(
+        order.order.id,
+        client,
+      );
+
+      if (!latestOrder) {
+        throw createError("Order not found", 404);
+      }
+
+      // Double safety check
+
+      if (latestOrder.status === "PAID") {
+        const existingPayment =
+          await paymentsRepository.findPaymentByIdempotencyKey(
+            idempotencyKey,
+            client,
+          );
+
+        return {
+          order: latestOrder,
+          payment: existingPayment || null,
+        };
+      }
+
+      const payment = await paymentsRepository.createPayment(
         {
-          orderId: order.id,
+          orderId: latestOrder.id,
           amount: gatewayResponse.chargedAmount,
-          providerTxnId:
-            gatewayResponse.providerTxnId,
+          providerTxnId: gatewayResponse.providerTxnId,
           status: "SUCCESS",
           idempotencyKey,
         },
-        client
+        client,
       );
 
-    const updatedOrder =
-      await ordersRepository.markOrderAsPaid(
-        order.id,
-        client
+      const updatedOrder = await ordersRepository.markOrderAsPaid(
+        latestOrder.id,
+        client,
       );
 
-    const response = {
-      order: updatedOrder,
-      payment,
-    };
+      return {
+        order: updatedOrder,
+        payment,
+      };
+    });
 
-    await redis.set(
-      `idem:${idempotencyKey}`,
-      JSON.stringify(response),
-      "EX",
-      3600
-    );
+    // Cache successful response
+
+    await redis.set(cacheKey, JSON.stringify(response), "EX", 3600);
 
     return response;
-  });
+  } catch (err) {
+    console.error("Charge order failed:", {
+      orderId,
+      idempotencyKey,
+      message: err.message,
+    });
+
+    throw err;
+  } finally {
+    try {
+      await redis.del(lockKey);
+    } catch (err) {
+      console.error("Failed to release Redis lock:", err.message);
+    }
+  }
 }
 
 async function processPaymentWebhook({
@@ -191,53 +266,144 @@ async function processPaymentWebhook({
   eventType,
   payload,
 }) {
-  return withTransaction(async (client) => {
-    const existingEvent =
-      await paymentsRepository.getWebhookEventByProviderEventId(
-        providerEventId,
-        client
+  if (!providerEventId) {
+    throw createError("providerEventId is required", 400);
+  }
+
+  if (!orderId) {
+    throw createError("orderId is required", 400);
+  }
+
+  if (!eventType) {
+    throw createError("eventType is required", 400);
+  }
+
+  try {
+    return await withTransaction(async (client) => {
+      // Deduplicate webhook delivery
+
+      const existingEvent =
+        await paymentsRepository.getWebhookEventByProviderEventId(
+          providerEventId,
+          client,
+        );
+
+      if (existingEvent) {
+        return {
+          accepted: true,
+          duplicate: true,
+        };
+      }
+
+      // Store webhook event
+
+      await paymentsRepository.createWebhookEvent(
+        {
+          providerEventId,
+          orderId,
+          eventType,
+          payload,
+        },
+        client,
       );
 
-    if (existingEvent) {
-      return { accepted: true };
-    }
+      // Ignore unsupported events
 
-    await paymentsRepository.createWebhookEvent(
-      {
-        providerEventId,
-        orderId,
-        eventType,
-        payload,
-      },
-      client
-    );
+      if (eventType !== "payment_succeeded") {
+        return {
+          accepted: true,
+        };
+      }
 
-    if (eventType === "payment_succeeded") {
-      await ordersRepository.markOrderAsPaid(
+      // Lock order row
+
+      const order = await ordersRepository.getOrderByIdForUpdate(
         orderId,
-        client
+        client,
       );
-    }
 
-    return { accepted: true };
-  });
+      if (!order) {
+        throw createError("Order not found", 404);
+      }
+
+      if (order.status === "PAID") {
+        return {
+          accepted: true,
+        };
+      }
+
+      //  Ensure successful payment exists
+
+      const paymentExists =
+        await paymentsRepository.findSuccessfulPaymentByOrderId(
+          orderId,
+          client,
+        );
+
+      if (!paymentExists) {
+        console.warn("Webhook received without successful payment record", {
+          providerEventId,
+          orderId,
+        });
+
+        return {
+          accepted: true,
+        };
+      }
+
+      // Mark order paid
+
+      await ordersRepository.markOrderAsPaid(orderId, client);
+
+      return {
+        accepted: true,
+      };
+    });
+  } catch (err) {
+    console.error("Webhook processing failed:", {
+      providerEventId,
+      orderId,
+      eventType,
+      message: err.message,
+    });
+
+    throw err;
+  }
 }
 
 async function getOrderById(orderId) {
-  const order =
-    await ordersRepository.getOrderWithDetails(orderId);
-
-  if (!order) {
-    const error = new Error("Order not found");
-    error.status = 404;
-    throw error;
+  if (!orderId) {
+    throw createError("Order ID is required", 400);
   }
 
-  return order;
+  try {
+    const order = await ordersRepository.getOrderWithDetails(orderId);
+
+    if (!order) {
+      throw createError("Order not found", 404);
+    }
+
+    return order;
+  } catch (err) {
+    console.error("Get order failed:", {
+      orderId,
+      message: err.message,
+    });
+
+    throw err;
+  }
 }
 
 async function listOrders(params) {
-  return ordersRepository.listOrders(params);
+  try {
+    return await ordersRepository.listOrders(params);
+  } catch (err) {
+    console.error("List orders failed:", {
+      message: err.message,
+    });
+
+    throw err;
+  }
 }
 
 module.exports = {

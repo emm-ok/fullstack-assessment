@@ -12,6 +12,10 @@ function randomBetween(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function generateTxnId(orderId) {
+  return `txn_${orderId}_${Date.now()}_${crypto.randomUUID()}`;
+}
+
 async function charge({ orderId, amount }) {
   const wait = randomBetween(PAYMENT_DELAY_MIN_MS, PAYMENT_DELAY_MAX_MS);
   await delay(wait);
@@ -23,9 +27,7 @@ async function charge({ orderId, amount }) {
   }
 
   return {
-    providerTxnId: `txn_${orderId}_${Date.now()}_${Math.floor(
-      Math.random() * 1e6,
-    )}`,
+    providerTxnId: generateTxnId(orderId),
     chargedAmount: amount,
   };
 }
