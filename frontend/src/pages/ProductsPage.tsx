@@ -37,7 +37,6 @@ export default function ProductsPage() {
           placeholder="Search products"
           onChange={(e) => {
             setQ(e.target.value);
-            load();
           }}
         />
       </div>

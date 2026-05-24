@@ -22,7 +22,7 @@ export default function ProductDetailPage() {
 
   const handleQuantity = (e: any) => {
     const value = Math.max(1, Number(e.target.value) || 1);
-    setQuantity(value)
+    setQuantity(value);
   }
 
   async function buyNow() {
@@ -52,7 +52,7 @@ export default function ProductDetailPage() {
           type="number"
           min={1}
           value={quantity}
-          onChange={(e) => setQuantity(Number(e.target.value))}
+          onChange={(e) => handleQuantity(e)}
         />
       </div>
       <div className="actions">

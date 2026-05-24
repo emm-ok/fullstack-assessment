@@ -6,6 +6,7 @@ export default function AdminPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [editing, setEditing] = useState<Record<number, Partial<Product>>>({});
+  const [loading, setLoading] = useState<boolean>(false);
 
   useEffect(() => {
     listOrdersAdmin().then(setOrders);
@@ -20,6 +21,7 @@ export default function AdminPage() {
   }
 
   async function save(p: Product) {
+    setLoading(true);
     const draft = editing[p.id] || {};
     setProducts((current) =>
       current.map((it) =>
@@ -28,12 +30,18 @@ export default function AdminPage() {
           : it,
       ),
     );
-    await updateProductAdmin(p.id, {
-      price: draft.price !== undefined ? Number(draft.price) : undefined,
-      stock: draft.stock !== undefined ? Number(draft.stock) : undefined,
-      description: draft.description as string | undefined,
-      name: draft.name as string | undefined,
-    });
+    try {
+      await updateProductAdmin(p.id, {
+        price: draft.price !== undefined ? Number(draft.price) : undefined,
+        stock: draft.stock !== undefined ? Number(draft.stock) : undefined,
+        description: draft.description as string | undefined,
+        name: draft.name as string | undefined,
+      });
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -92,7 +100,7 @@ export default function AdminPage() {
                   onChangeField(p.id, "description", e.target.value)
                 }
               />
-              <button onClick={() => save(p)}>Save</button>
+              <button onClick={() => save(p)}>{loading ? "Saving..." : "Save"}</button>
             </li>
           ))}
         </ul>
