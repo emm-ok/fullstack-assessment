@@ -20,13 +20,13 @@ async function request<T>(
   return data as T;
 }
 
-export function listProducts(q?: string): Promise<Product[]> {
+export function listProducts(q?: string, signal?: AbortSignal): Promise<Product[]> {
   const qs = q ? `?q=${encodeURIComponent(q)}` : "";
-  return request<Product[]>(`/products${qs}`);
+  return request<Product[]>(`/products${qs}`, { signal });
 }
 
-export function getProduct(id: number | string): Promise<Product> {
-  return request<Product>(`/products/${id}`);
+export function getProduct(id: number | string, signal?: AbortSignal): Promise<Product> {
+  return request<Product>(`/products/${id}`, { signal });
 }
 
 export function createOrder(body: {
@@ -36,6 +36,9 @@ export function createOrder(body: {
 }): Promise<Order> {
   return request<Order>("/orders", {
     method: "POST",
+    headers: {
+      "Idemptency-Key": crypto.randomUUID(),
+    },
     body: JSON.stringify(body),
   });
 }
@@ -47,6 +50,9 @@ export function getOrder(id: number | string): Promise<Order> {
 export function chargeOrder(orderId: number): Promise<{ order: Order }> {
   return request<{ order: Order }>(`/payments/charge`, {
     method: "POST",
+    headers: {
+      "Idemptency-Key": crypto.randomUUID(),
+    },
     body: JSON.stringify({ orderId }),
   });
 }
@@ -63,6 +69,10 @@ export function updateProductAdmin(
     localStorage.getItem("admin_token") ??
     import.meta.env.VITE_ADMIN_TOKEN ??
     "";
+
+  if (!token) {
+    throw new Error("Missing admin token");
+  }
   return request<Product>(`/admin/products/${id}`, {
     method: "PATCH",
     headers: {

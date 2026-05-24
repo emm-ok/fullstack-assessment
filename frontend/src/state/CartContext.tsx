@@ -5,6 +5,7 @@ import {
   useMemo,
   useState,
   ReactNode,
+  useEffect,
 } from "react";
 import type { CartItem, Product } from "../types";
 
@@ -16,21 +17,41 @@ interface CartContextValue {
   total: number;
 }
 
+const STORAGE_KEY = "cart_items";
+
 const CartContext = createContext<CartContextValue | undefined>(undefined);
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<CartItem[]>([]);
+  const [items, setItems] = useState<CartItem[]>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  }, [items]);
 
   const add = useCallback((product: Product, quantity = 1) => {
     setItems((current) => {
       const existing = current.find((i) => i.productId === product.id);
+
       if (existing) {
+        const nextQuantity = existing.quantity + quantity;
+        if (nextQuantity > product.stock) {
+          return current;
+        }
+
         return current.map((i) =>
           i.productId === product.id
-            ? { ...i, quantity: i.quantity + quantity }
+            ? {...i,quantity: nextQuantity}
             : i,
         );
       }
+
       return [
         ...current,
         {
