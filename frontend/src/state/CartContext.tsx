@@ -36,7 +36,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         {
           productId: product.id,
           name: product.name,
-          price: parseFloat(product.price),
+          price: product.price,
           quantity,
         },
       ];
